@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-14
+
 ### Fixed
 
 - System Settings > Login Items listed the background watcher under the signing certificate's name with a blank icon; its LaunchAgent now names its app (`AssociatedBundleIdentifiers`), so it shows as Tegata CLI. Run `tegata watch install` once after updating.

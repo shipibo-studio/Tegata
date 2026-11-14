@@ -7,7 +7,7 @@ import TegataDarwin
 /// The `tegata` command. Read-only, no network, no root. Arguments are parsed by hand on purpose: one less
 /// dependency in a security tool's supply chain.
 public enum TegataCommand {
-    public static let version = "0.1.0"
+    public static let version = "0.1.1"
     /// The team that signs Tegata's releases. Public: it is in every signature.
     public static let releaseTeam = "34BRMF8X9A"
 
