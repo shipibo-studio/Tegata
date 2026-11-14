@@ -1,0 +1,43 @@
+# The `tegata` command in a minimal signed bundle, so `tegata watch` can keep its secrets under a keychain access
+# group (entitlements hold when the bundle's executable is launched through a symlink; a copy outside the bundle
+# is killed at launch).
+# Generate with `xcodegen generate`; build with ./build.sh. The team below signs Tegata's releases.
+name: TegataCLI
+options:
+  deploymentTarget:
+    macOS: "15.0"
+packages:
+  Tegata:
+    path: ../..
+settings:
+  base:
+    DEVELOPMENT_TEAM: 34BRMF8X9A
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_HARDENED_RUNTIME: YES
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+    GENERATE_INFOPLIST_FILE: YES
+    ENABLE_DEBUG_DYLIB: NO
+    DEAD_CODE_STRIPPING: YES
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+  configs:
+    Release:
+      CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO   # no get-task-allow in Release
+targets:
+  TegataCLI:
+    type: application
+    platform: macOS
+    sources: [CLI]
+    dependencies:
+      - package: Tegata
+        product: TegataCommand
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.tegata.cli
+        PRODUCT_NAME: "Tegata CLI"
+        EXECUTABLE_NAME: tegata
+        CODE_SIGN_ENTITLEMENTS: CLI/tegata.entitlements
+        INFOPLIST_KEY_LSBackgroundOnly: YES
+        INFOPLIST_KEY_CFBundleDisplayName: "Tegata CLI"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon   # placeholder seal; brand icon to replace it

@@ -1,0 +1,42 @@
+name: Feature request
+description: Propose a new rule, agent, command or change.
+title: "[feature]: "
+labels: ["enhancement", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. Proposals are discussed before code is written.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What risk or task does Tegata miss today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should Tegata do, and what should a person see? A synthetic example helps.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: principles
+    attributes:
+      label: Principles
+      options:
+        - label: It does not print, store or send a secret value.
+          required: true
+        - label: It adds no telemetry, and no network access beyond the optional update check.
+          required: true

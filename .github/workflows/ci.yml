@@ -1,0 +1,38 @@
+# Build and test on macOS. The command line is macOS-only for now; the engine's tests run here too.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Toolchain
+        run: swift --version
+
+      - name: Build
+        run: swift build
+
+      - name: Test
+        # The Secure Enclave test skips itself where there is none (hosted runners).
+        run: swift test
+
+      - name: Release build of the command
+        run: swift build -c release --product tegata && .build/release/tegata version

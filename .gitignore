@@ -1,0 +1,5 @@
+.build/
+.swiftpm/
+Packaging/macos/TegataCLI.xcodeproj/
+Packaging/macos/build/
+Packaging/macos/dist/

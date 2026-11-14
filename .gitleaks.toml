@@ -1,0 +1,10 @@
+# gitleaks configuration: the default rules, plus an allowlist for the synthetic keys the tests use.
+# Tegata detects secrets, so its tests need secret-shaped values. Every one is fake: they carry
+# "TestOnly", are alphabet runs, or are well-known documentation examples.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Synthetic secret-shaped values in tests"
+paths = ['''^Tests/''']

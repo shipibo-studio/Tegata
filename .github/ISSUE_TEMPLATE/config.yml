@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Contribution guidelines
+    url: https://github.com/shipibo-studio/Tegata/blob/main/CONTRIBUTING.md
+    about: How to report, propose and contribute. Read it before opening an issue.
+  - name: Report a security vulnerability
+    url: https://github.com/shipibo-studio/Tegata/security/advisories/new
+    about: Do not use public issues for vulnerabilities. Report them privately here.

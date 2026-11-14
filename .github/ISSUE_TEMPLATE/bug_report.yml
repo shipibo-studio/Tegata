@@ -1,0 +1,72 @@
+name: Bug report
+description: Report unexpected behavior or an error.
+title: "[bug]: "
+labels: ["bug", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Never paste real keys, real chats or your real agent configuration.** Tegata's output is designed to be safe to paste (it shows names, paths as `~` and counts, never values); if a file is needed, reduce it to a synthetic example.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      placeholder: What happened, and what did you expect?
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and output
+      description: The command you ran and what it printed (add --no-color).
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Add a hook like '...' to a test settings.json
+        2. Run 'tegata scan'
+        3. See '...'
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: tegata version
+      description: Output of `tegata version`.
+    validations:
+      required: true
+
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac model
+      placeholder: macOS 26.5, MacBook Pro M3
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How tegata was installed
+      options:
+        - Release zip (signed bundle)
+        - Homebrew
+        - Built from source
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Agents involved (Claude Code, Codex…), anything else that helps. No secrets.
+    validations:
+      required: false
