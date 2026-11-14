@@ -20,6 +20,16 @@ public enum CommandLineWatch {
         return n > 0 ? String(cString: buf) : CommandLine.arguments[0]
     }
 
+    /// The bundle identifier of the app this executable sits in (`app.tegata.cli`), or nil for a plain build.
+    public static var bundleIdentifier: String? {
+        var url = URL(fileURLWithPath: executablePath)
+        for _ in 0..<4 {                                           // …/Tegata CLI.app/Contents/MacOS/tegata
+            url.deleteLastPathComponent()
+            if url.pathExtension == "app" { return Bundle(url: url)?.bundleIdentifier }
+        }
+        return nil
+    }
+
     @discardableResult
     static func launchctl(_ args: [String]) -> (status: Int32, output: String) {
         let p = Process()
@@ -48,7 +58,7 @@ public enum CommandLineWatch {
         let fm = FileManager.default
         try fm.createDirectory(at: plistURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try fm.createDirectory(at: logDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let plist: [String: Any] = [
+        var plist: [String: Any] = [
             "Label": label,
             "ProgramArguments": [executablePath, "watch", "run"],
             "RunAtLoad": true,
@@ -56,6 +66,9 @@ public enum CommandLineWatch {
             "ProcessType": "Background",
             "StandardErrorPath": logDirectory.appendingPathComponent("watch.log").path,
         ]
+        // Without this, System Settings > Login Items lists the watcher under the signing certificate's name
+        // (a person's name for an individual developer account) with a blank icon; with it, as "Tegata CLI".
+        if let id = bundleIdentifier { plist["AssociatedBundleIdentifiers"] = [id] }
         let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
         try data.write(to: plistURL, options: [.atomic])
         launchctl(["bootout", "gui/\(uid)/\(label)"])
