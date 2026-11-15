@@ -93,8 +93,12 @@ final class RedactBench {
     @Test func zshHistoryWithNonUTF8BytesIsCleanedByteForByte() throws {
         let b = try RedactBench()
         // zsh "metafies" non-ASCII: 0x83 followed by the byte xor 0x20. Not valid UTF-8.
-        var bytes = Data(": 1700000000:0;echo caf".utf8) + Data([0x83, 0xC3 ^ 0x20, 0x83, 0xA9 ^ 0x20]) + Data("\n".utf8)
-        bytes += Data(": 1700000001:0;export OPENAI_API_KEY=sk-proj-TestOnlyNotARealKeyABCDEFGHIJKLMNOPQRSTUV0123\n".utf8)
+        // Spelled out step by step: older compilers (CI) cannot type-check the one-line form.
+        let metafied: [UInt8] = [0x83, 0xC3 ^ 0x20, 0x83, 0xA9 ^ 0x20]
+        var bytes = Data(": 1700000000:0;echo caf".utf8)
+        bytes.append(contentsOf: metafied)
+        bytes.append(contentsOf: Array("\n".utf8))
+        bytes.append(contentsOf: Array(": 1700000001:0;export OPENAI_API_KEY=sk-proj-TestOnlyNotARealKeyABCDEFGHIJKLMNOPQRSTUV0123\n".utf8))
         let url = b.root.appendingPathComponent(".zsh_history")
         try bytes.write(to: url)
         try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-3600)], ofItemAtPath: url.path)
