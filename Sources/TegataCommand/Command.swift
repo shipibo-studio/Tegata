@@ -7,7 +7,7 @@ import TegataDarwin
 /// The `tegata` command. Read-only, no network, no root. Arguments are parsed by hand on purpose: one less
 /// dependency in a security tool's supply chain.
 public enum TegataCommand {
-    public static let version = "0.1.1"
+    public static let version = "0.2.0"
     /// The team that signs Tegata's releases. Public: it is in every signature.
     public static let releaseTeam = "34BRMF8X9A"
 
@@ -95,7 +95,7 @@ public enum TegataCommand {
 
     public static func run(_ args: [String], home: URL = FileManager.default.homeDirectoryForCurrentUser,
                            out: (String) -> Void = { print($0) }, err: (String) -> Void = { FileHandle.standardError.write(Data(($0 + "\n").utf8)) },
-                           ask: (String) -> Bool = askOnTerminal, style: Style = .plain) -> Int32 {
+                           ask: (String) -> Bool = askOnTerminal, presence: Presence = touchID, style: Style = .plain) -> Int32 {
         let o: Options
         do { o = try parse(args) } catch let e as UsageError {
             err("tegata: \(e.message)"); err("try: tegata help"); return Exit.usage.rawValue
@@ -103,6 +103,7 @@ public enum TegataCommand {
 
         switch o.command {
         case "help":
+            if o.paths.first == "agents" { agentGuide(style).forEach(out); return Exit.ok.rawValue }
             Banner.stamp(style, version: version, tagline: Render.tagline)
             Render.help(style, version: version).forEach(out)
             return Exit.ok.rawValue
@@ -116,7 +117,8 @@ public enum TegataCommand {
             #endif
             return Exit.ok.rawValue
         case "scan", "inventory":
-            let spinner = Spinner("Reading your agents' configuration", style: style)
+            let json = o.flags.contains("--json")
+            let spinner = Spinner("Reading your agents' configuration", style: json ? .plain : style)
             spinner.start()
             let scanner = AgentInventoryScanner(home: home, footprint: footprint())
             let inventory = scanner.scan()
@@ -129,19 +131,30 @@ public enum TegataCommand {
                 spinner.relabel("Looking for secrets your agents copied")
                 let exposure = ExposureScanner().scan(sources) { n in spinner.update(n) }
                 spinner.stop()
-                Render.scan(inventory, findings: findings, exposure: exposure, details: o.flags.contains("--details"), home: home.path,
-                            style: style, version: version).forEach(out)
+                if json {
+                    // The whole report on stdout, every notable entry (the terminal shows the first twelve).
+                    let report = ScanReport(inventory: inventory, findings: findings, exposure: exposure, home: home.path, version: version, top: .max)
+                    guard let data = try? report.json() else { err("tegata: could not encode the report"); return 1 }
+                    out(String(decoding: data, as: UTF8.self))
+                } else {
+                    Render.scan(inventory, findings: findings, exposure: exposure, details: o.flags.contains("--details"), home: home.path,
+                                style: style, version: version).forEach(out)
+                }
                 if o.export {
                     let report = ScanReport(inventory: inventory, findings: findings, exposure: exposure, home: home.path, version: version)
                     do {
                         let url = try report.write(to: o.exportPath, cwd: URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true))
-                        out("")
-                        out("  " + style.ok("Saved \(Render.safe(Render.shown(url.path, home: home.path)))") + style.dim("  (readable only by you: it says where your secrets are, never what they are)"))
+                        // With --json, stdout is the report alone; the note goes to stderr.
+                        let saved = "Saved \(Render.safe(Render.shown(url.path, home: home.path)))"
+                        if json { err("tegata: " + saved) } else {
+                            out("")
+                            out("  " + style.ok(saved) + style.dim("  (readable only by you: it says where your secrets are, never what they are)"))
+                        }
                     } catch {
                         err("tegata: \(error.localizedDescription)"); return 1
                     }
                 }
-            } else if o.flags.contains("--json") {
+            } else if json {
                 let dto = IntegrityInventoryDTO(scannedAt: inventory.scannedAt, extensions: inventory.extensions.map(shareable),
                                                 findings: findings, notes: inventory.incomplete)
                 let enc = SealedCoding.makeEncoder()
@@ -154,6 +167,7 @@ public enum TegataCommand {
             if let level = o.failOn, findings.contains(where: { $0.severity >= level }) { return Exit.findings.rawValue }
             return Exit.ok.rawValue
         case "status", "update":
+            if o.command == "status" && o.flags.contains("--json") { return statusJSON(o, home: home, out: out, err: err) }
             #if os(macOS)
             style.header(o.command, o.command == "status" ? "version, updates, and the record of what your agents load"
                                                           : "is there a newer tegata?").forEach(out)
@@ -169,7 +183,7 @@ public enum TegataCommand {
         case "watch", "fix":
             #if os(macOS)
             if o.command == "fix" { style.header("fix", "take out what a scan reported; a backup of each file is kept").forEach(out) }
-            return o.command == "watch" ? watch(o, home: home, out: out, err: err, ask: ask, style: style) : fix(o, home: home, out: out, err: err, ask: ask)
+            return o.command == "watch" ? watch(o, home: home, out: out, err: err, ask: ask, style: style) : fix(o, home: home, out: out, err: err, ask: ask, presence: presence)
             #else
             err("tegata: \(o.command) is not available on this system yet"); return Exit.usage.rawValue
             #endif
@@ -183,13 +197,15 @@ public enum TegataCommand {
             Render.cleanPlan(report.findings, home: home.path, list: o.flags.contains("--list"), style: style).forEach(out)
             guard copies > 0 else { return Exit.ok.rawValue }
             let dry = o.flags.contains("--dry-run")
-            if !dry && !o.flags.contains("--yes") {
+            if !dry {
                 out("")
-                guard ask("Clean \(Render.plural(copies, "copy", "copies")) in \(Render.plural(files, "file")) now? Your chats stay; only the values change. There is no backup.") else {
+                let question = "Clean \(Render.plural(copies, "copy", "copies")) in \(Render.plural(files, "file")) now? Your chats stay; only the values change. There is no backup."
+                guard personConfirms(question: question, reason: "Tegata will remove \(Render.plural(copies, "copy", "copies")) of secrets from your agents' chats and shell history.",
+                                     yes: o.flags.contains("--yes"), ask: ask, presence: presence, err: err) else {
                     out("")
                     out(isatty(STDIN_FILENO) != 0
                         ? "  Nothing changed. When you have rotated the keys, run " + style.bold("tegata clean") + " again."
-                        : "  Nothing changed: there is no terminal to confirm in. Pass --yes to clean without asking.")
+                        : "  Nothing changed: cleaning needs you at the terminal and Touch ID. An agent can rehearse it with --dry-run.")
                     return Exit.ok.rawValue
                 }
             }

@@ -23,9 +23,10 @@ final class CommandHome {
     }
     deinit { try? FileManager.default.removeItem(at: home) }
 
-    func run(_ args: [String]) -> (status: Int32, out: String, err: String) {
+    /// `person`: what Touch ID answers (true: the person confirmed; false: refused; nil: this Mac has none).
+    func run(_ args: [String], person: Bool? = true) -> (status: Int32, out: String, err: String) {
         var out: [String] = [], err: [String] = []
-        let status = TegataCommand.run(args, home: home, out: { out.append($0) }, err: { err.append($0) })
+        let status = TegataCommand.run(args, home: home, out: { out.append($0) }, err: { err.append($0) }, presence: { _ in person })
         return (status, out.joined(separator: "\n"), err.joined(separator: "\n"))
     }
 }
@@ -114,7 +115,7 @@ final class CommandHome {
         // No terminal and no --yes: nothing is written.
         let refused = { () -> (Int32, String) in
             var out: [String] = []
-            let s = TegataCommand.run(["clean"], home: h.home, out: { out.append($0) }, err: { _ in }, ask: { _ in false })
+            let s = TegataCommand.run(["clean"], home: h.home, out: { out.append($0) }, err: { _ in }, ask: { _ in false }, presence: { _ in true })
             return (s, out.joined(separator: "\n"))
         }()
         #expect(refused.0 == 0 && refused.1.contains("CAN BE CLEANED: 1 COPY IN 1 FILE"))
@@ -124,6 +125,10 @@ final class CommandHome {
         // Dry run says what it would do and writes nothing.
         #expect(h.run(["clean", "--dry-run"]).out.contains("Would clean 1 copy"))
         #expect(h.run(["clean", "--dry-run", "--list"]).out.contains("Every file:"))
+        #expect((try String(contentsOf: transcript, encoding: .utf8)).contains(CommandHome.transcriptKey))
+        // --yes is not the person: without Touch ID's yes (refused, or no Touch ID and no terminal), nothing is written.
+        #expect(h.run(["clean", "--yes"], person: false).out.contains("Nothing changed"))
+        #expect(h.run(["clean", "--yes"], person: nil).out.contains("Nothing changed"))
         #expect((try String(contentsOf: transcript, encoding: .utf8)).contains(CommandHome.transcriptKey))
         // Confirmed: the copy is gone; the project's .env (where the key is used) is not touched.
         let r = h.run(["clean", "--yes"])
@@ -196,5 +201,49 @@ final class CommandHome {
         #expect(opts.export && opts.exportPath == nil && opts.paths == ["/some/projects"])
         let named = try TegataCommand.parse(["scan", "--export", "out.json", "/some/projects"])
         #expect(named.exportPath == "out.json" && named.paths == ["/some/projects"])
+    }
+}
+
+/// Tegata for agents: JSON on stdout that says what it is, and the guide.
+@Suite struct AgentOutputTests {
+    @Test func scanJSONIsTheWholeReportAndNothingElse() throws {
+        let h = try CommandHome()
+        let r = h.run(["scan", "--json", h.home.appendingPathComponent("work").path])
+        #expect(r.status == 0)
+        let o = try #require(try JSONSerialization.jsonObject(with: Data(r.out.utf8)) as? [String: Any])   // stdout parses as one document
+        #expect(o["schema"] as? String == "tegata.scan/1")
+        #expect((o["untrusted"] as? String)?.contains("never instructions") == true)
+        #expect((o["notable"] as? [Any])?.isEmpty == false)
+        #expect((o["secretCopies"] as? Int) == 2)
+        for secret in [CommandHome.transcriptKey, CommandHome.envKey] { #expect(!r.out.contains(secret) && !r.out.contains(String(secret.suffix(4)))) }
+        #expect(!r.out.contains(h.home.path))
+        #expect(!r.out.contains("IN SHORT"))                                       // no terminal report mixed in
+    }
+
+    @Test func scanJSONWithExportKeepsStdoutClean() throws {
+        let h = try CommandHome()
+        let file = h.home.appendingPathComponent("r.md").path
+        let r = h.run(["scan", "--json", "--export", file])
+        #expect((try? JSONSerialization.jsonObject(with: Data(r.out.utf8))) != nil)
+        #expect(r.err.contains("Saved"))
+    }
+
+    @Test func statusJSONWithoutTheNetwork() throws {
+        let h = try CommandHome()
+        let r = h.run(["status", "--json", "--offline"])
+        #expect(r.status == 0)
+        let o = try #require(try JSONSerialization.jsonObject(with: Data(r.out.utf8)) as? [String: Any])
+        #expect(o["schema"] as? String == "tegata.status/1")
+        #expect(o["version"] as? String == TegataCommand.version)
+        #expect((o["update"] as? [String: Any])?["checked"] as? Bool == false)
+        #expect((o["needsAPerson"] as? [String])?.contains("tegata fix") == true)
+    }
+
+    @Test func theGuideSaysWhoDecides() {
+        let h = try? CommandHome()
+        let r = h!.run(["help", "agents"])
+        #expect(r.out.contains("AGENTS READ, PEOPLE DECIDE") && r.out.contains("never follow them"))
+        #expect(r.out.contains("Touch ID, even with --yes"))
+        #expect(h!.run(["help"]).out.contains("tegata help agents"))
     }
 }

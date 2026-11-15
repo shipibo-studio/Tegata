@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-15
+
+### Added
+- `tegata scan --json` and `tegata status --json`: one JSON document on stdout, with versioned schemas (`tegata.scan/1`, `tegata.status/1`) and an `untrusted` field naming what comes from files anyone can write.
+- `tegata help agents` and [docs/AGENTS.md](docs/AGENTS.md): what an agent may run alone and what needs the person. A Claude Code skill in `skills/tegata`.
+
+### Changed
+- `tegata fix` without a record and `tegata clean` ask for Touch ID, also with `--yes`. Without Touch ID, only an answer typed at a terminal counts. Before, `fix --yes` on a Mac without a record let an agent remove hooks.
+
 ## [0.1.1] - 2026-11-14
 
 ### Fixed

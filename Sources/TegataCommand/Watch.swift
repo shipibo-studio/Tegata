@@ -266,9 +266,9 @@ extension TegataCommand {
         return Exit.ok.rawValue
     }
 
-    /// `tegata fix remove|quarantine <id>… | --owner <name>`: what a scan reports, not only what changed. With a record,
-    /// one Touch ID covers the batch and the record follows; without one, a confirmation is enough.
-    static func fix(_ o: Options, home: URL, out: (String) -> Void, err: (String) -> Void, ask: (String) -> Bool) -> Int32 {
+    /// `tegata fix remove|quarantine <id>… | --owner <name>`: what a scan reports, not only what changed. One Touch ID
+    /// covers the batch either way; with a record, the record follows.
+    static func fix(_ o: Options, home: URL, out: (String) -> Void, err: (String) -> Void, ask: (String) -> Bool, presence: Presence) -> Int32 {
         guard let first = o.paths.first, let option = IntegrityRemedy.Option(rawValue: first), option != .revert else {
             err("tegata: fix needs remove or quarantine, then ids (tegata inventory --ids) or --owner <name>"); return Exit.usage.rawValue
         }
@@ -290,7 +290,11 @@ extension TegataCommand {
             if hasRecord {
                 auth = try blocking { try await TouchID.authorize(reason: "Tegata will \(option == .remove ? "remove" : "move aside") \(what) of your agents' configuration (a backup is kept).") }
             } else {
-                guard o.flags.contains("--yes") || ask("\(option == .remove ? "Remove" : "Move aside") \(what)? A backup of each file is kept next to it.") else {
+                // No record to unlock, so no Touch ID on the way: ask for it here. --yes skips the question, not the person
+                // (before, `fix --yes` let an agent remove hooks on a Mac without a record).
+                guard personConfirms(question: "\(option == .remove ? "Remove" : "Move aside") \(what)? A backup of each file is kept next to it.",
+                                     reason: "Tegata will \(option == .remove ? "remove" : "move aside") \(what) of your agents' configuration (a backup is kept).",
+                                     yes: o.flags.contains("--yes"), ask: ask, presence: presence, err: err) else {
                     err("tegata: nothing changed"); return Exit.ok.rawValue
                 }
                 auth = ConfirmedAtPrompt()

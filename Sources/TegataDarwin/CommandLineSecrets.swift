@@ -126,6 +126,12 @@ public actor SecureEnclaveBlobKeyProvider: KeyProvider {
 
 /// Touch ID from a command line: biometrics or an Apple Watch only, no password fallback (D3).
 public enum TouchID {
+    /// Whether this Mac can ask for Touch ID (or an Apple Watch) now: a sensor, enrolled fingers, not locked out.
+    public static var isAvailable: Bool {
+        var err: NSError?
+        return LAContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometricsOrWatch, error: &err)
+    }
+
     public static func authorize(reason: String) async throws -> LAAuthorization {
         let ctx = LAContext()
         ctx.localizedCancelTitle = "Deny"

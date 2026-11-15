@@ -19,7 +19,7 @@ import TegataDarwin
         var settings: String { (try? String(contentsOf: url.appendingPathComponent(".claude/settings.json"), encoding: .utf8)) ?? "" }
     }
 
-    func run(_ args: [String], _ h: Home, appIsWatching: Bool = false, answer: Bool = false) -> (Int32, String, String) {
+    func run(_ args: [String], _ h: Home, appIsWatching: Bool = false, answer: Bool = false, person: Bool? = true) -> (Int32, String, String) {
         TegataCommand.testOverrides = .init(appIsWatching: appIsWatching) { home in
             let m = IntegrityMonitor(home: home, directory: home.appendingPathComponent("state/integrity"), quarantineDir: home.appendingPathComponent("state/q"),
                                      provider: InMemoryKeyProvider(), secrets: MemorySecrets(), footprintCheck: nil) { _ in }
@@ -27,7 +27,7 @@ import TegataDarwin
         }
         defer { TegataCommand.testOverrides = nil }
         var out: [String] = [], err: [String] = []
-        let s = TegataCommand.run(args, home: h.url, out: { out.append($0) }, err: { err.append($0) }, ask: { _ in answer })
+        let s = TegataCommand.run(args, home: h.url, out: { out.append($0) }, err: { err.append($0) }, ask: { _ in answer }, presence: { _ in person })
         return (s, out.joined(separator: "\n"), err.joined(separator: "\n"))
     }
 
@@ -38,6 +38,17 @@ import TegataDarwin
         let done = run(["fix", "remove", "--owner", "someapp"], h, answer: true)
         #expect(done.0 == 0 && done.1.contains("Removed"))
         #expect(!h.settings.contains("someapp") && h.settings.contains("echo keep"))
+    }
+
+    /// Before: `fix --yes` on a Mac without a record let an agent remove hooks. --yes skips the question, not the person.
+    @Test func fixWithYesStillNeedsThePerson() throws {
+        let h = try Home()
+        let refused = run(["fix", "remove", "--owner", "someapp", "--yes"], h, person: false)
+        #expect(refused.0 == 0 && refused.2.contains("nothing changed") && h.settings.contains("someapp"))
+        let noTouchID = run(["fix", "remove", "--owner", "someapp", "--yes"], h, person: nil)      // and no terminal
+        #expect(noTouchID.2.contains("--yes is not enough") && h.settings.contains("someapp"))
+        let done = run(["fix", "remove", "--owner", "someapp", "--yes"], h, person: true)
+        #expect(done.1.contains("Removed") && !h.settings.contains("someapp"))
     }
 
     @Test func fixDefersToTheAppWhenItIsWatching() throws {
