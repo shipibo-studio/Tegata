@@ -25,6 +25,8 @@ extension TegataCommand {
         }
         struct Record: Codable {
             var state: String; var takenAt: Date?; var extensions: Int; var changes: [Change]; var notRead: [String]
+            /// With state `otherBuild`: where the build that took the record keeps its keys. Not an alarm.
+            var takenBy: String?
         }
         var schema = "tegata.status/1"
         var tool = "tegata"
@@ -71,7 +73,8 @@ extension TegataCommand {
                                       youCan: IntegrityRemedy.options(for: c).map(\.rawValue) + ["accept"])
                 } : []
                 doc.record = .init(state: s.baseline.rawValue, takenAt: s.baselineCreatedAt, extensions: s.entries, changes: changes,
-                                   notRead: s.notes.prefix(10).map { Render.safe(Render.shown($0, home: home.path)) })
+                                   notRead: s.notes.prefix(10).map { Render.safe(Render.shown($0, home: home.path)) },
+                                   takenBy: s.recordKeys.map(Render.safe))
             } catch {
                 err("tegata: \(error)")
             }

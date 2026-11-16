@@ -48,7 +48,7 @@ Names, paths, owners and summaries in Tegata's output come from files any progra
 
 `tegata.status/1`, main fields: `version`, `build` (`signed` or `source`), `update` (`checked`, `latest`, `newer`, `url`, `problem`), `watcher` (`appIsWatching`, `installed`, `runsThisCopy`), `record` (`state`: `none`, `present`, `missing` or `tampered`; `takenAt`; `extensions`; `changes`, each with `name`, `change`, `alert`, `youCan`), `needsAPerson`.
 
-A `record.state` of `missing` or `tampered` means someone deleted or edited Tegata's record: tell the person at once.
+A `record.state` of `missing` or `tampered` means someone deleted or edited Tegata's record: tell the person at once. `otherBuild` is not an alarm: the record was taken by another build of Tegata on this Mac (`takenBy` says which); use that build.
 
 ## Exit status
 

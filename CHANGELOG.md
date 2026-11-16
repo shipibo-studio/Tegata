@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-15
+
+### Added
+- Release files are attested with GitHub artifact attestations: `gh attestation verify` on the zip and on `SHA256SUMS` (see docs/VERIFYING.md). 0.2.0 is attested too.
+
+### Fixed
+- A build from source on a Mac where the signed build took the record no longer reports the record as altered: it says another build of Tegata took it, and refuses to replace or forget it. The build that took the record still treats any change to it as an alarm. Records taken before 0.2.1 learn which build took them on the signed build's next check.
+
 ## [0.2.0] - 2026-11-15
 
 ### Added

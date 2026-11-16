@@ -241,3 +241,54 @@ final class MonitorBench {
         #expect(try String(contentsOf: b.settings, encoding: .utf8) == MonitorBench.twoHooks)
     }
 }
+
+/// Two builds of Tegata on one Mac (signed and from source) share the record's folder but not its keys.
+@Suite struct TwoBuildsTests {
+    func monitor(_ b: MonitorBench, secrets: MemorySecrets, keys: String?) -> IntegrityMonitor {
+        IntegrityMonitor(home: b.home, directory: b.root.appendingPathComponent("state/integrity"),
+                         quarantineDir: b.root.appendingPathComponent("state/quarantine"),
+                         provider: InMemoryKeyProvider(), secrets: secrets, footprintCheck: nil, keysLabel: keys) { _ in }
+    }
+
+    @Test func theOtherBuildSaysSoAndCannotEraseOrReplaceTheRecord() async throws {
+        let b = try MonitorBench()
+        try b.writeSettings(MonitorBench.oneHook)
+        let signed = monitor(b, secrets: MemorySecrets(), keys: "signed")
+        let source = monitor(b, secrets: MemorySecrets(), keys: "source")
+        try await signed.establish(replace: false, authorization: UserWasPresent())
+
+        let seen = await source.status(rescan: true)
+        #expect(seen.baseline == .otherBuild && seen.recordKeys == "signed")
+        await #expect(throws: IntegrityMonitorError.otherBuild("signed")) { try await source.forget() }
+        await #expect(throws: IntegrityMonitorError.otherBuild("signed")) { try await source.establish(replace: true, authorization: UserWasPresent()) }
+        await #expect(throws: IntegrityMonitorError.otherBuild("signed")) { _ = try await source.fix(["x"], option: .remove, authorization: UserWasPresent()) }
+        #expect(await signed.status(rescan: true).baseline == .present)      // untouched
+    }
+
+    @Test func theBuildThatTookTheRecordIsNotFooledByTheMarker() async throws {
+        let b = try MonitorBench()
+        try b.writeSettings(MonitorBench.oneHook)
+        let signed = monitor(b, secrets: MemorySecrets(), keys: "signed")
+        try await signed.establish(replace: false, authorization: UserWasPresent())
+        // Someone rewrites the index and the marker to blame another build: the owner's own mark says the record is its.
+        try Data("{}".utf8).write(to: b.indexURL)
+        try Data("source".utf8).write(to: b.root.appendingPathComponent("state/integrity/integrity-keys"))
+        #expect(await signed.status(rescan: true).baseline == .tampered)
+    }
+
+    @Test func aRecordWithoutTheMarkerGetsItFromTheBuildThatCanReadIt() async throws {
+        let b = try MonitorBench()
+        try b.writeSettings(MonitorBench.oneHook)
+        let secrets = MemorySecrets()
+        let old = monitor(b, secrets: secrets, keys: nil)                      // before the marker existed
+        try await old.establish(replace: false, authorization: UserWasPresent())
+        let marker = b.root.appendingPathComponent("state/integrity/integrity-keys")
+        #expect(!FileManager.default.fileExists(atPath: marker.path))
+        // Without a marker, another build still cannot tell: it reports what it sees, as before.
+        #expect(await monitor(b, secrets: MemorySecrets(), keys: "source").status(rescan: true).baseline == .tampered)
+        // The build that took it writes the marker on its next check; from then on the other build knows.
+        #expect(await monitor(b, secrets: secrets, keys: "signed").status(rescan: true).baseline == .present)
+        #expect((try? String(contentsOf: marker, encoding: .utf8)) == "signed")
+        #expect(await monitor(b, secrets: MemorySecrets(), keys: "source").status(rescan: true).baseline == .otherBuild)
+    }
+}

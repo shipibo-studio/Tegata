@@ -7,7 +7,9 @@ import Crypto
 
 /// What the watcher reports after a check. Values are already redacted.
 public struct IntegrityStatus: Codable, Sendable, Equatable {
-    public enum Baseline: String, Codable, Sendable { case none, present, missing, tampered }
+    /// `otherBuild`: a record is there, taken by another build of Tegata that holds other keys (the signed build and
+    /// one built from source, on the same Mac). This build cannot read it, and it is not evidence of tampering.
+    public enum Baseline: String, Codable, Sendable { case none, present, missing, tampered, otherBuild }
     public var baseline: Baseline
     public var baselineCreatedAt: Date?
     public var lastScan: Date?
@@ -19,8 +21,11 @@ public struct IntegrityStatus: Codable, Sendable, Equatable {
     /// Paths and folders left unread on purpose or by failure (protected folders, broken links).
     public var notes: [String]
     public var signatureValid: Bool?
+    /// With `otherBuild`: where the keys of the build that took the record are, as that build described them.
+    public var recordKeys: String?
     public init(baseline: Baseline, baselineCreatedAt: Date?, lastScan: Date?, scanSeconds: Double?, entries: Int,
-                changes: [IntegrityChange], unreadableSources: [String], notes: [String], signatureValid: Bool?) {
+                changes: [IntegrityChange], unreadableSources: [String], notes: [String], signatureValid: Bool?, recordKeys: String? = nil) {
+        self.recordKeys = recordKeys
         self.baseline = baseline; self.baselineCreatedAt = baselineCreatedAt; self.lastScan = lastScan; self.scanSeconds = scanSeconds
         self.entries = entries; self.changes = changes; self.unreadableSources = unreadableSources; self.notes = notes; self.signatureValid = signatureValid
     }
@@ -57,6 +62,10 @@ public struct IntegrityMonitorError: Error, Equatable, CustomStringConvertible {
     public let message: String
     public init(_ message: String) { self.message = message }
     public var description: String { message }
+    /// The record belongs to another build of Tegata; changing or removing it from here would break that build's record.
+    public static func otherBuild(_ keys: String) -> IntegrityMonitorError {
+        IntegrityMonitorError("the record was taken by another build of Tegata (keys in: \(keys)); run this from that build")
+    }
 }
 
 /// The two small secrets that must not sit next to the baseline files: the key that authenticates the index, and the
@@ -103,6 +112,10 @@ public actor IntegrityMonitor {
     public nonisolated let directory: URL
     public nonisolated let quarantineDir: URL
     public nonisolated let keyTag: String
+    /// Where this build keeps the record's keys, in words ("keychain access group (signed build)"). Written next to the
+    /// record when it is taken, so another build of the same tool, holding other keys, can say so instead of calling the
+    /// record altered. nil (the app): nothing is written and nothing changes.
+    public nonisolated let keysLabel: String?
     let provider: any KeyProvider
     let secrets: any IntegritySecrets
     let footprintCheck: FootprintCheck?
@@ -114,8 +127,9 @@ public actor IntegrityMonitor {
     private var signature: (checked: Date, valid: Bool)?
 
     public init(home: URL, directory: URL, quarantineDir: URL, keyTag: String = IntegrityMonitor.defaultKeyTag,
-                provider: any KeyProvider, secrets: any IntegritySecrets, footprintCheck: FootprintCheck?,
+                provider: any KeyProvider, secrets: any IntegritySecrets, footprintCheck: FootprintCheck?, keysLabel: String? = nil,
                 emit: @escaping @Sendable (IntegrityEvent) async -> Void) {
+        self.keysLabel = keysLabel
         self.home = home; self.directory = directory; self.quarantineDir = quarantineDir; self.keyTag = keyTag
         self.provider = provider; self.secrets = secrets; self.footprintCheck = footprintCheck; self.emit = emit
         scanner = AgentInventoryScanner(home: home, footprint: footprintCheck.map { TegataFootprint(appBundle: $0.appBundle) } ?? nil)
@@ -125,6 +139,35 @@ public actor IntegrityMonitor {
     private func store() throws -> IntegrityStore {
         IntegrityStore(directory: directory, provider: provider, keyTag: keyTag,
                        authenticator: HMACBaselineAuthenticator(key: try secrets.hmacKey()))
+    }
+
+    // MARK: whose record
+
+    var keysMarkerURL: URL { directory.appendingPathComponent("integrity-keys") }
+    var recordOnDisk: Bool {
+        let fm = FileManager.default
+        return fm.fileExists(atPath: directory.appendingPathComponent("integrity-index.json").path)
+            && fm.fileExists(atPath: directory.appendingPathComponent("integrity-snapshot.ags").path)
+    }
+    func recordedKeys() -> String? {
+        guard let d = try? Data(contentsOf: keysMarkerURL), d.count <= 200 else { return nil }
+        let s = String(decoding: d, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return s.isEmpty ? nil : s
+    }
+    func writeKeysMarker() {
+        guard let keysLabel else { return }
+        let fd = open(keysMarkerURL.path, O_WRONLY | O_CREAT | O_TRUNC, 0o600)
+        guard fd >= 0 else { return }
+        _ = Data(keysLabel.utf8).withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
+        close(fd)
+    }
+
+    /// The other build's description when the record on disk is not this build's: this build never took one (its own
+    /// keychain has no "established" mark, which no other program can set) and the marker names other keys. The build
+    /// that took the record always has its mark, so for it a changed record stays an alarm whatever the marker says.
+    func otherBuildsKeys() -> String? {
+        guard let mine = keysLabel, secrets.established == nil, recordOnDisk, let theirs = recordedKeys(), theirs != mine else { return nil }
+        return theirs
     }
 
     /// Recognise Tegata's own entries only while this bundle's signature holds.
@@ -159,6 +202,12 @@ public actor IntegrityMonitor {
                                      entries: inventory.extensions.count, changes: [], unreadableSources: [], notes: inventory.incomplete,
                                      signatureValid: signature?.valid)
         defer { last = result }
+        // Before touching the keys: asking this build's keychain for an HMAC key would create one for a record it never took.
+        if let theirs = otherBuildsKeys() {
+            result.baseline = .otherBuild
+            result.recordKeys = theirs
+            return result
+        }
         let store: IntegrityStore
         do { store = try self.store() } catch { result.notes.append("integrity key unavailable: \(error)"); return result }
         guard await store.hasBaseline() else {
@@ -178,6 +227,8 @@ public actor IntegrityMonitor {
         }
         result.baseline = .present
         result.baselineCreatedAt = index.createdAt
+        // Records taken before the marker existed get it from the build that can read them.
+        if keysLabel != nil, recordedKeys() != keysLabel { writeKeysMarker() }
         let diff = IntegrityDiffer.diff(baseline: index, current: inventory, findings: findings)
         if diff.rulesUpdatePending {
             if diff.isEmpty {
@@ -231,6 +282,7 @@ public actor IntegrityMonitor {
     // MARK: Touch ID actions (the caller has already authenticated the user)
 
     public func establish(replace: Bool, authorization: any UnlockAuthorization) async throws {
+        if let theirs = otherBuildsKeys() { throw IntegrityMonitorError.otherBuild(theirs) }
         let store = try self.store()
         if await store.hasBaseline(), !replace { throw IntegrityMonitorError("a baseline exists; accept changes, or replace it explicitly") }
         switch await provider.state(tag: keyTag) {
@@ -243,12 +295,14 @@ public actor IntegrityMonitor {
         let (snapshot, index) = IntegritySnapshot.make(inventory: inventory, raw: raw, classifier: classifier, now: Date())
         try await store.writeBaseline(snapshot: snapshot, index: index)
         try secrets.setEstablished(Date())
+        writeKeysMarker()
         announced.removeAll()
         _ = authorization   // presence was required to get here; the snapshot itself is written without unwrapping
         await check(reason: "baseline taken")
     }
 
     public func accept(_ ids: Set<String>, authorization: any UnlockAuthorization) async throws {
+        if let theirs = otherBuildsKeys() { throw IntegrityMonitorError.otherBuild(theirs) }
         guard !ids.isEmpty else { return }
         await refreshFootprint()
         let (inventory, raw) = scanner.scanWithRaw()
@@ -259,6 +313,7 @@ public actor IntegrityMonitor {
     /// One pending change, undone. Revert writes the baseline's copy back (no accept needed: the entry then matches).
     /// Remove and Quarantine take the entry away and then accept its absence, so the record matches what the user chose.
     public func remedy(_ id: String, option: IntegrityRemedy.Option, authorization: any UnlockAuthorization) async throws -> String {
+        if let theirs = otherBuildsKeys() { throw IntegrityMonitorError.otherBuild(theirs) }
         let store = try self.store()
         let index = try await store.loadIndex()
         await refreshFootprint()
@@ -300,6 +355,7 @@ public actor IntegrityMonitor {
     /// that confirms them, so the record matches what the user chose and nothing a tool wrote back in between is
     /// accepted with it. One authorization covers the whole batch.
     public func fix(_ ids: [String], option: IntegrityRemedy.Option, authorization: any UnlockAuthorization) async throws -> String {
+        if let theirs = otherBuildsKeys() { throw IntegrityMonitorError.otherBuild(theirs) }
         guard option != .revert else { throw IntegrityMonitorError("revert applies to a change since the baseline, not to an entry") }
         guard !ids.isEmpty else { return "Nothing to do." }
         await refreshFootprint()
@@ -353,6 +409,7 @@ public actor IntegrityMonitor {
     /// Accepts every difference the new rules explain or may explain, then records the new rules. Real edits (an entry
     /// whose text changed) are not part of it and stay pending. Returns how many entries were refreshed.
     public func refreshRules(authorization: any UnlockAuthorization) async throws -> Int {
+        if let theirs = otherBuildsKeys() { throw IntegrityMonitorError.otherBuild(theirs) }
         let store = try self.store()
         let index = try await store.loadIndex()
         await refreshFootprint()
@@ -375,7 +432,9 @@ public actor IntegrityMonitor {
 
     /// Uninstall only. Order matters: the marker goes last, so an interrupted forget still reports a missing record.
     public func forget() async throws {
+        if let theirs = otherBuildsKeys() { throw IntegrityMonitorError.otherBuild(theirs) }
         try? await store().removeBaseline()
+        try? FileManager.default.removeItem(at: keysMarkerURL)
         try? await provider.destroyKey(tag: keyTag)
         secrets.forget()
         announced.removeAll(); last = nil

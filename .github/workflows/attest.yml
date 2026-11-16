@@ -1,0 +1,54 @@
+# Attest each release's files with GitHub artifact attestations (Sigstore, signed with this workflow's identity).
+#
+# The macOS build is made and notarized on the maintainer's Mac (notarization needs the Apple Developer account),
+# then uploaded to the release. This workflow downloads those files, checks them against SHA256SUMS, and attests
+# both: the zip and SHA256SUMS itself, so the checksums are signed too. What it proves: these exact files were
+# published by shipibo-studio/Tegata for this release. What it does not prove: that GitHub built them from source.
+#
+# Verify:  gh attestation verify tegata-cli-<version>-macos.zip --repo shipibo-studio/Tegata
+#          gh attestation verify SHA256SUMS --repo shipibo-studio/Tegata
+
+name: Attest release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attest (for example v0.2.0)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  attest:
+    name: Attest the release files
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write       # Sigstore signing with this workflow's identity
+      attestations: write
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download the release files
+        run: |
+          case "$TAG" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "not a release tag: $TAG"; exit 1 ;; esac
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dist \
+            --pattern 'tegata-cli-*-macos.zip' --pattern SHA256SUMS
+          ls -l dist
+
+      - name: Check them against SHA256SUMS
+        working-directory: dist
+        run: sha256sum --check --strict SHA256SUMS
+
+      - name: Attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/tegata-cli-*-macos.zip
+            dist/SHA256SUMS

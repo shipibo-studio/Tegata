@@ -37,11 +37,14 @@ extension TegataCommand {
         let provider: any KeyProvider
         let secrets: any IntegritySecrets
         let protection: String
+        let keys: String
         if ProcessEntitlements.keychainAccessGroup != nil {
+            keys = "the signed build (keychain access group)"
             provider = SecureEnclaveKeyProvider()
             secrets = DataProtectionIntegritySecrets(service: cliService)
             protection = "Secure Enclave key and a keychain access group only this signed build can use"
         } else {
+            keys = "a build from source (login keychain and key file)"
             provider = SecureEnclaveBlobKeyProvider(directory: state.appendingPathComponent("keys", isDirectory: true))
             secrets = LoginKeychainIntegritySecrets(service: cliService)
             protection = "Secure Enclave key file and the login keychain (a build from source: other apps asking for these items get a macOS prompt; the signed build keeps them in an access group)"
@@ -52,7 +55,7 @@ extension TegataCommand {
         }
         let monitor = IntegrityMonitor(home: home, directory: state.appendingPathComponent("integrity", isDirectory: true),
                                        quarantineDir: state.appendingPathComponent("quarantine", isDirectory: true), keyTag: cliKeyTag,
-                                       provider: provider, secrets: secrets, footprintCheck: check, emit: emit)
+                                       provider: provider, secrets: secrets, footprintCheck: check, keysLabel: keys, emit: emit)
         return (monitor, protection)
     }
 
@@ -121,6 +124,11 @@ extension TegataCommand {
         case .tampered:
             out.append("  " + st.wrap("●", "1;31") + " The record was altered outside Tegata, so it cannot be trusted:")
             out.append("    review with " + st.bold("tegata scan") + ", then take a new one: " + st.bold("tegata watch establish --replace"))
+        case .otherBuild:
+            // Not an alarm: two builds of Tegata on one Mac, each with its own keys (see IntegrityMonitor.otherBuildsKeys).
+            out.append("  " + st.yellow("◆") + " Taken by another build of Tegata: " + Render.safe(s.recordKeys ?? "another copy") + ".")
+            out.append("    This copy keeps its keys elsewhere, so it cannot read that record; nothing suggests it was altered.")
+            out.append("    Use the build that took it" + (CommandLineWatch.installedProgram.map { " (" + st.bold(Render.safe($0)) + ")" } ?? "") + " for status, accept and fix.")
         }
         if let installed {
             out.append("  " + (installed ? st.ok("Watching in the background (starts with your Mac)")
