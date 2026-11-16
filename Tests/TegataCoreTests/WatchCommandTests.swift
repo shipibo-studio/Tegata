@@ -51,6 +51,30 @@ import TegataDarwin
         #expect(done.1.contains("Removed") && !h.settings.contains("someapp"))
     }
 
+    /// Homebrew's upgrade removes the LaunchAgent; the next command puts it back, only for the program that installed it.
+    @Test func theWatcherComesBackOnlyForTheSameProgram() {
+        let app = "/Applications/Tegata CLI.app/Contents/MacOS/tegata"
+        var asked = false
+        let appWatching = { asked = true; return false }
+        #expect(TegataCommand.watcherNeedsResume(wantedBy: app, me: app, agentPresent: false, appWatching: appWatching))
+        #expect(!TegataCommand.watcherNeedsResume(wantedBy: nil, me: app, agentPresent: false, appWatching: { false }))       // never asked for
+        #expect(!TegataCommand.watcherNeedsResume(wantedBy: app, me: "/src/.build/debug/tegata", agentPresent: false, appWatching: { false }))  // another build
+        #expect(!TegataCommand.watcherNeedsResume(wantedBy: app, me: app, agentPresent: true, appWatching: { false }))        // already there
+        #expect(!TegataCommand.watcherNeedsResume(wantedBy: app, me: app, agentPresent: false, appWatching: { true }))        // the app watches
+        asked = false
+        _ = TegataCommand.watcherNeedsResume(wantedBy: app, me: app, agentPresent: true, appWatching: appWatching)
+        #expect(!asked)                                                                                                       // launchctl only when needed
+    }
+
+    @Test func aRecordWithNobodyWatchingIsSaidPlainly() throws {
+        let h = try Home()
+        let s = IntegrityStatus(baseline: .present, baselineCreatedAt: Date(), lastScan: Date(), scanSeconds: 0, entries: 2,
+                                changes: [], unreadableSources: [], notes: [], signatureValid: nil)
+        #expect(TegataCommand.describe(s, protection: "memory", installed: false).joined().contains("Nothing is watching"))
+        #expect(TegataCommand.describe(s, protection: "memory", installed: true).joined().contains("Watching in the background"))
+        _ = h
+    }
+
     @Test func fixDefersToTheAppWhenItIsWatching() throws {
         let h = try Home()
         let r = run(["fix", "remove", "--owner", "someapp", "--yes"], h, appIsWatching: true)

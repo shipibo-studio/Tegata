@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-15
+
+### Fixed
+- A Homebrew upgrade no longer leaves the background watcher off: Homebrew runs the old version's uninstall, which removes the watcher; the next `tegata` command puts it back (only for the same program at the same path, never for another build) and says so on stderr. `watch install` records the choice and `watch uninstall` clears it; watchers installed before this version record it when they start.
+- `tegata watch status` says plainly when a record exists but nothing is watching.
+
 ## [0.2.1] - 2026-11-15
 
 ### Added

@@ -28,6 +28,49 @@ extension TegataCommand {
         home.appendingPathComponent("Library/Application Support/Tegata CLI", isDirectory: true)
     }
 
+    // MARK: the watcher across upgrades
+
+    /// "The person wants the watcher, run by this program": written by `watch install` and by the watcher when it
+    /// starts, removed by `watch uninstall`. Homebrew runs the old version's uninstall during an upgrade, which removes
+    /// the LaunchAgent but not this file, so the next `tegata` command can put the watcher back.
+    static func wantedURL(home: URL) -> URL { stateDirectory(home: home).appendingPathComponent("watch-wanted") }
+
+    static func markWanted(home: URL, program: String) {
+        let url = wantedURL(home: home)
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try? Data(program.utf8).write(to: url, options: .atomic)
+    }
+
+    static func wantedBy(home: URL) -> String? {
+        guard let d = try? Data(contentsOf: wantedURL(home: home)), d.count < 4096 else { return nil }
+        let s = String(decoding: d, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return s.isEmpty ? nil : s
+    }
+
+    /// Only the same program at the same path comes back (Homebrew upgrades keep /Applications/Tegata CLI.app); a build
+    /// from source run on the same Mac never takes the watcher over. `appWatching` is asked last: it starts launchctl.
+    static func watcherNeedsResume(wantedBy: String?, me: String, agentPresent: Bool, appWatching: () -> Bool) -> Bool {
+        guard let wantedBy, wantedBy == me, !agentPresent else { return false }
+        return !appWatching()
+    }
+
+    /// Before any command but help, version and the watch commands that manage the agent themselves. Says so on stderr,
+    /// so `--json` output stays one document.
+    static func resumeWatcherIfNeeded(_ o: Options, home: URL, err: (String) -> Void) {
+        guard testOverrides == nil else { return }                          // tests never touch launchd
+        if ["help", "version"].contains(o.command) { return }
+        if o.command == "watch", ["install", "uninstall", "run", "forget"].contains(o.paths.first ?? "status") { return }
+        let me = CommandLineWatch.executablePath
+        guard watcherNeedsResume(wantedBy: wantedBy(home: home), me: me, agentPresent: CommandLineWatch.installed,
+                                 appWatching: { CommandLineWatch.appIsWatching }) else { return }
+        do {
+            try CommandLineWatch.install(logDirectory: stateDirectory(home: home))
+            err("tegata: the background watcher was off after an update; it is on again (tegata watch uninstall turns it off)")
+        } catch {
+            err("tegata: the background watcher is off and could not be restarted (\(error.localizedDescription)); run: tegata watch install")
+        }
+    }
+
     /// Where the watcher keeps its secrets depends on how this binary was built: a keychain access group is an
     /// entitlement macOS honours only inside a signed bundle with its profile (also when launched through a symlink).
     static func makeMonitor(home: URL, emit: @escaping @Sendable (IntegrityEvent) async -> Void) -> (monitor: IntegrityMonitor, protection: String) {
@@ -131,8 +174,14 @@ extension TegataCommand {
             out.append("    Use the build that took it" + (CommandLineWatch.installedProgram.map { " (" + st.bold(Render.safe($0)) + ")" } ?? "") + " for status, accept and fix.")
         }
         if let installed {
-            out.append("  " + (installed ? st.ok("Watching in the background (starts with your Mac)")
-                                         : st.yellow("◆") + " Not watching in the background: " + st.bold("tegata watch install")))
+            if installed {
+                out.append("  " + st.ok("Watching in the background (starts with your Mac)"))
+            } else if s.baseline == .present {
+                // A record nobody compares against: changes go unnoticed until someone runs status by hand.
+                out.append("  " + st.wrap("●", "1;31") + " Nothing is watching: your record is kept, but changes are not noticed. " + st.bold("tegata watch install"))
+            } else {
+                out.append("  " + st.yellow("◆") + " Not watching in the background: " + st.bold("tegata watch install"))
+            }
         }
         out.append("  " + st.ok("Keys: \(protection)"))
 
@@ -186,6 +235,7 @@ extension TegataCommand {
                 }
             case "install":
                 try CommandLineWatch.install(logDirectory: stateDirectory(home: home))
+                markWanted(home: home, program: CommandLineWatch.executablePath)
                 out("  " + st.ok("Watching in the background. It starts with your Mac and tells you when your agents' configuration changes."))
                 out("  " + st.dim("Runs \(Render.safe(CommandLineWatch.executablePath))"))
                 let s = try blocking { await monitor.status(rescan: false) }
@@ -198,6 +248,7 @@ extension TegataCommand {
                 }
             case "uninstall":
                 CommandLineWatch.uninstall()
+                try? FileManager.default.removeItem(at: wantedURL(home: home))
                 out("Removed the watcher. Its record stays; tegata watch forget removes it too.")
             case "establish":
                 let replace = o.flags.contains("--replace")
@@ -261,6 +312,8 @@ extension TegataCommand {
             case "run":
                 // The background process. Exits quietly if the app took over since it was installed.
                 NativeNotifications.prepare()        // the first run asks macOS for permission to notify as Tegata
+                // Watchers installed before 0.2.2 have no "wanted" file; the running one is proof enough.
+                if wantedBy(home: home) == nil { markWanted(home: home, program: CommandLineWatch.executablePath) }
                 let watcher = IntegrityWatcher(monitor: monitor)
                 watcher.start()
                 dispatchMain()

@@ -2,27 +2,32 @@
 # The bundle goes to /Applications and `tegata` is linked into the PATH; launched through that link it keeps the
 # bundle's keychain access group.
 cask "tegata" do
-  version "0.2.1"
-  sha256 "bccdd7dc66642e6c19d43d3bc198443c49423b1cabe552709acd9fb0af367090"
+  version "0.2.2"
+  sha256 "715c067944e59b0b2096fbf0c2d5cd6b5cdd6bb300902ea4144289a9b0ab7426"
 
   url "https://github.com/shipibo-studio/Tegata/releases/download/v#{version}/tegata-cli-#{version}-macos.zip"
   name "Tegata"
-  desc "See what your AI coding agents can run, and what secrets they may have copied"
-  homepage "https://www.tegata.cc"
+  desc "Checkpoint for AI coding agents: what they run and which secrets they copied"
+  homepage "https://github.com/shipibo-studio/Tegata"
 
-  depends_on macos: ">= :sequoia"
+  livecheck do
+    url :url
+    strategy :github_latest
+  end
+
+  depends_on macos: :sequoia
 
   app "Tegata CLI.app"
+  # Launched through this link, the command keeps the signed bundle's keychain access group.
   binary "#{appdir}/Tegata CLI.app/Contents/MacOS/tegata"
 
-  uninstall launchctl: "app.tegata.cli-watch",
-            delete:    "~/Library/LaunchAgents/app.tegata.cli-watch.plist"
+  uninstall launchctl: "app.tegata.cli-watch"
 
   zap trash: "~/Library/Application Support/Tegata CLI"
 
   caveats <<~EOS
-    tegata scan            first look, read-only
-    tegata watch install   background watcher (tegata watch establish takes its record with Touch ID)
-    If Tegata.app is installed, it is the one watcher and the command line points to it.
+    Start with a read-only look:   tegata scan
+    Watch in the background:       tegata watch install && tegata watch establish
+    After an upgrade, the next tegata command turns the watcher back on.
   EOS
 end
